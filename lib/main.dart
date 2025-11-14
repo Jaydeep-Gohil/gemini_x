@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:gemini_x/MyHomePage.dart';
+import 'package:gemini_x/onboarding.dart';
 
 void main() {
   runApp(const MyApp());
@@ -14,7 +15,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: Myhomepage(),
+      home: OnBoarding(),
     );
   }
 }
