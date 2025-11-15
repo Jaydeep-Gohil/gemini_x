@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:gemini_x/MyHomePage.dart';
 import 'package:gemini_x/onboarding.dart';
+import 'package:gemini_x/themes.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,9 +13,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Flutter Demo',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
+      theme: lightMode,
+      darkTheme: darkMode,
       home: OnBoarding(),
     );
   }
