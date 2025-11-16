@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gemini_x/MyHomePage.dart';
 import 'package:gemini_x/onboarding.dart';
 import 'package:gemini_x/themeNotifier.dart';
 import 'package:gemini_x/themes.dart';
 
-void main() {
+void main()async{
+  await dotenv.load(fileName: '.env');
+  print('DBG main: keyPresent=${dotenv.env['GOOGLE_API_KEY']?.isNotEmpty}');
+
   runApp(ProviderScope(child: MyApp()));
 }
 
