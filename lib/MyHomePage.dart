@@ -1,6 +1,7 @@
 import 'dart:async'; // for TimeoutException
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gemini_x/message.dart';
@@ -19,13 +20,16 @@ class Myhomepage extends ConsumerStatefulWidget {
 class _MyhomepageState extends ConsumerState<Myhomepage> {
   final TextEditingController _controller = TextEditingController();
   final List<Message> _messages = [
-    Message(text: "Hii", isUser: true),
-    Message(text: "How are You", isUser: false),
-    Message(text: "I am fine", isUser: true),
-    Message(text: "Grate", isUser: false),
   ];
 
   bool isLoading = false;
+
+  void _copyToClipboard(String text){
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+  }
+
+
 
   @override
   void dispose() {
@@ -274,11 +278,14 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Align(
                     alignment: alignment,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                      decoration: BoxDecoration(color: bubbleColor, borderRadius: BorderRadius.circular(16)),
-                      child: Text(message.text, style: textStyle),
+                    child: InkWell(
+                      onLongPress: () => _copyToClipboard(message.text),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                        decoration: BoxDecoration(color: bubbleColor, borderRadius: BorderRadius.circular(16)),
+                        child: Text(message.text, style: textStyle),
+                      ),
                     ),
                   ),
                 );
