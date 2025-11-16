@@ -127,14 +127,14 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
           final wait = baseDelayMs + jitter;
           debugPrint('DBG: waiting ${wait}ms before retry');
           await Future.delayed(Duration(milliseconds: wait));
-          baseDelayMs *= 2; // exponential backoff
+          baseDelayMs *= 2; 
           continue;
         }
       } on GenerativeAIException catch (g) {
         final msg = g.toString();
         debugPrint('DBG: GenerativeAIException: $msg');
 
-        // If server-side overload, retry with backoff
+    
         if (msg.contains('503') || msg.contains('UNAVAILABLE') || msg.toLowerCase().contains('overloaded')) {
           if (attempt < maxAttempts) {
             final jitter = rng.nextInt(500);
@@ -191,12 +191,11 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
       if (response.candidates.isNotEmpty) {
         final Candidate first = response.candidates.first;
 
-        // Candidate.text is a convenience getter (may be null)
         if (first.text != null && first.text!.trim().isNotEmpty) {
           return first.text!;
         }
 
-        // Fallback: try candidate.content.parts (List<Part>)
+        
         final content = first.content;
         if (content != null && content.parts != null && content.parts!.isNotEmpty) {
           final parts = content.parts!;
