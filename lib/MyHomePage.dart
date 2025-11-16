@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gemini_x/message.dart';
+import 'package:gemini_x/themeNotifier.dart';
 
-class Myhomepage extends StatefulWidget {
+class Myhomepage extends ConsumerStatefulWidget {
   const Myhomepage({super.key});
 
   @override
-  State<Myhomepage> createState() => _MyhomepageState();
+  ConsumerState<Myhomepage> createState() => _MyhomepageState();
 }
 
-class _MyhomepageState extends State<Myhomepage> {
+class _MyhomepageState extends ConsumerState<Myhomepage> {
   TextEditingController _controller = TextEditingController();
   final List<Message> _messages = [
     Message(text: "Hii", isUser: true),
@@ -16,6 +18,18 @@ class _MyhomepageState extends State<Myhomepage> {
     Message(text: "I am fine", isUser: true),
     Message(text: "Grate", isUser: false),
   ];
+
+  ThemeMode currentTheme = ThemeMode.light;
+
+  @override
+  void initState() {
+    getCurrentTheme();
+    super.initState();
+  }
+  getCurrentTheme(){
+    final currentTheme = ref.read(themeProvider);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -34,7 +48,12 @@ class _MyhomepageState extends State<Myhomepage> {
                 Text('Gemini X',style: Theme.of(context).textTheme.titleLarge)
               ],
             ),
-            Image.asset('assets/volume-high.png',color: Colors.blue[800],),
+            GestureDetector(
+              onTap: (){
+                ref.read(themeProvider.notifier).toggleTheme();
+              },
+                child: (currentTheme ==ThemeMode.dark)?Icon(Icons.light_mode):Icon(Icons.dark_mode),
+            ),
           ],
         ),
 

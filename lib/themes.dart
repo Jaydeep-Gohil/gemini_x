@@ -12,7 +12,6 @@ class FontSizes {
   static const doubleExtraLarge = 26.0;
 
 }
-
 ThemeData lightMode = ThemeData(
   brightness: Brightness.light,
   colorScheme: ColorScheme.light(
@@ -40,13 +39,13 @@ ThemeData darkMode = ThemeData(
     colorScheme: ColorScheme.dark(
         background: Color(0xff000000),
         primary: Color(0xff3369FF),
-        secondary: Color(0xffffff)
+        secondary: Color(0xffEEEEEE),
     ),
   textTheme: TextTheme(
     titleLarge: TextStyle(color: Color(0xffEEEEEE),),
     titleSmall: TextStyle(color: Color(0xff000000),),
     bodyMedium: TextStyle(color: Color(0xffEEEEEE),
-                          fontSize: FontSizes.small,
+      fontSize: FontSizes.medium,
     ),
     bodySmall: TextStyle(
       color: Color(0xff000000),
