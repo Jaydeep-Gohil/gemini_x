@@ -34,7 +34,6 @@ class OnBoarding extends StatelessWidget {
                 onPressed: (){
                   Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context)=>Myhomepage()), (route) => false);
                 },
-
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,

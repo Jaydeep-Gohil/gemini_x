@@ -1,14 +1,17 @@
-import 'dart:async'; // for TimeoutException
+// lib/Myhomepage.dart
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:gemini_x/message.dart';
-import 'package:gemini_x/themeNotifier.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'message.dart';
+import 'themeNotifier.dart';
 
 class Myhomepage extends ConsumerStatefulWidget {
   const Myhomepage({super.key});
@@ -23,75 +26,98 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
   ];
 
   bool isLoading = false;
+  String? _lastPrompt; // used for retry
+  static const _storageKey = 'chat_messages_v1';
 
-  void _copyToClipboard(String text){
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+  @override
+  void initState() {
+    super.initState();
+    _loadMessagesLocally();
   }
-
-
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
-  // 1) list models — verifies key + network
-  Future<void> listGeminiModels() async {
-    final apiKey = dotenv.env['GOOGLE_API_KEY'] ?? '';
-    debugPrint('DBG listModels: apiKeyPresent=${apiKey.isNotEmpty}');
-    final url = Uri.parse('https://api.generative.ai/v1/models');
 
+  // shared_preferences
+
+  Map<String, dynamic> _messageToMap(Message m) => {
+    'text': m.text,
+    'isUser': m.isUser,
+  };
+
+  Message _messageFromMap(Map<String, dynamic> map) {
+    return Message(text: map['text'] ?? '', isUser: map['isUser'] ?? false);
+  }
+
+  Future<void> _saveMessagesLocally() async {
     try {
-      final resp = await http.get(url, headers: {
-        'x-goog-api-key': apiKey,
-        'Content-Type': 'application/json',
-      }).timeout(const Duration(seconds: 15));
-
-      debugPrint('DBG listModels: status=${resp.statusCode}');
-      debugPrint('DBG listModels: body=${resp.body}');
-    } catch (e, st) {
-      debugPrint('DBG listModels exception: $e\n$st');
+      final prefs = await SharedPreferences.getInstance();
+      final list = _messages.map((m) => jsonEncode(_messageToMap(m))).toList();
+      await prefs.setStringList(_storageKey, list);
+    } catch (e) {
+      debugPrint('saveMessages error: $e');
     }
   }
 
-// 2) simple generate test using REST — shows raw response fast
-  Future<void> simpleGenerateTest() async {
-    final apiKey = dotenv.env['GOOGLE_API_KEY'] ?? '';
-    final url = Uri.parse('https://api.generative.ai/v1/models/gemini-2.5-pro:generate');
-    final body = {
-      'input': [
-        {
-          'role': 'user',
-          'content': [
-            {'type': 'text', 'text': 'Say hello in one line.'}
-          ]
+  Future<void> _loadMessagesLocally() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_storageKey) ?? [];
+      final loaded = list.map((s) {
+        try {
+          final map = jsonDecode(s) as Map<String, dynamic>;
+          return _messageFromMap(map);
+        } catch (_) {
+          return Message(text: s, isUser: false);
         }
-      ]
-    };
+      }).toList();
 
-    try {
-      final resp = await http.post(url,
-        headers: {'Content-Type': 'application/json', 'x-goog-api-key': apiKey},
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 20));
-
-      debugPrint('DBG gen: status=${resp.statusCode}');
-      debugPrint('DBG gen: body=${resp.body}');
-    } catch (e, st) {
-      debugPrint('DBG gen exception: $e\n$st');
+      if (loaded.isNotEmpty) {
+        setState(() {
+          _messages.clear();
+          // keep newest first (we display reversed list)
+          _messages.addAll(loaded.reversed);
+        });
+      }
+    } catch (e) {
+      debugPrint('loadMessages error: $e');
     }
   }
 
-  Future<void> callGeminiModel() async {
-    final prompt = _controller.text.trim();
+  Future<void> _clearHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_storageKey);
+    setState(() {
+      _messages.clear();
+    });
+  }
+
+
+  // Clipboard
+
+  void _copyToClipboard(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+  }
+
+
+  // Gemini call
+  Future<void> callGeminiModel({String? promptOverride}) async {
+    final prompt = (promptOverride ?? _controller.text).trim();
     if (prompt.isEmpty) return;
 
-    // Show user message immediately
+    // mark last prompt (for retry)
+    _lastPrompt = prompt;
+
+    // show user's message immediately
     setState(() {
       _messages.insert(0, Message(text: prompt, isUser: true));
       isLoading = true;
     });
+    await _saveMessagesLocally();
 
     final apiKey = dotenv.env['GOOGLE_API_KEY'];
     if (apiKey == null || apiKey.isEmpty) {
@@ -102,49 +128,46 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
 
     final model = GenerativeModel(model: 'gemini-2.5-pro', apiKey: apiKey);
 
-    const int maxAttempts = 5;
+    const int maxAttempts = 4;
     int attempt = 0;
-    int baseDelayMs = 1000; // 1s
+    int baseDelayMs = 800;
     final rng = Random();
 
     while (attempt < maxAttempts) {
       attempt++;
-      debugPrint('DBG retry: attempt #$attempt');
+      debugPrint('DBG retry attempt #$attempt');
 
       try {
-        // Increase timeout to allow slower responses
-        final GenerateContentResponse response =
-        await model.generateContent([Content.text(prompt)]).timeout(const Duration(seconds: 60));
+        final GenerateContentResponse response = await model
+            .generateContent([Content.text(prompt)])
+            .timeout(const Duration(seconds: 50));
 
-        debugPrint('DBG: SDK success candidates=${response.candidates.length}');
         final botText = _extractTextFromGenerateResponse(response);
-
-        setState(() => _messages.insert(0, Message(text: botText, isUser: false)));
+        setState(() {
+          _messages.insert(0, Message(text: botText, isUser: false));
+          _lastPrompt = null; // success -> clear lastPrompt
+        });
+        await _saveMessagesLocally();
         _controller.clear();
-        break; // success
+        break;
       } on TimeoutException {
-        debugPrint('DBG: SDK timeout on attempt $attempt');
+        debugPrint('DBG: timeout attempt $attempt');
         if (attempt >= maxAttempts) {
           _showAndInsert('Request timed out after multiple attempts.');
         } else {
           final jitter = rng.nextInt(500);
-          final wait = baseDelayMs + jitter;
-          debugPrint('DBG: waiting ${wait}ms before retry');
-          await Future.delayed(Duration(milliseconds: wait));
-          baseDelayMs *= 2; 
+          await Future.delayed(Duration(milliseconds: baseDelayMs + jitter));
+          baseDelayMs *= 2;
           continue;
         }
       } on GenerativeAIException catch (g) {
         final msg = g.toString();
-        debugPrint('DBG: GenerativeAIException: $msg');
+        debugPrint('DBG GenerativeAIException: $msg');
 
-    
         if (msg.contains('503') || msg.contains('UNAVAILABLE') || msg.toLowerCase().contains('overloaded')) {
           if (attempt < maxAttempts) {
             final jitter = rng.nextInt(500);
-            final wait = baseDelayMs + jitter;
-            debugPrint('DBG: model overloaded, retrying after ${wait}ms');
-            await Future.delayed(Duration(milliseconds: wait));
+            await Future.delayed(Duration(milliseconds: baseDelayMs + jitter));
             baseDelayMs *= 2;
             continue;
           } else {
@@ -155,8 +178,7 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
         }
         break;
       } catch (e, st) {
-        // Generic catch (works on Web + mobile)
-        debugPrint('DBG: unexpected exception: $e\n$st');
+        debugPrint('DBG unexpected error: $e\n$st');
         final emsg = e.toString();
         if (emsg.contains('Failed host lookup') || emsg.contains('SocketException')) {
           _showAndInsert('Network error: check your internet connection.');
@@ -174,66 +196,52 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
     setState(() => isLoading = false);
   }
 
-// helper to insert message and show snack
-  void _showAndInsert(String text) {
-    setState(() {
-      _messages.insert(0, Message(text: text, isUser: false));
-    });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
-
-// shortens long error messages for UI
-  String _shorten(String s, [int max = 140]) {
-    if (s.length <= max) return s;
-    return '${s.substring(0, max)}...';
-  }
-
-
+  // Extract text safely from typed response
   String _extractTextFromGenerateResponse(GenerateContentResponse response) {
     try {
-      // Prefer typed candidates
       if (response.candidates.isNotEmpty) {
         final Candidate first = response.candidates.first;
+        if (first.text != null && first.text!.trim().isNotEmpty) return first.text!;
 
-        if (first.text != null && first.text!.trim().isNotEmpty) {
-          return first.text!;
-        }
-
-        
         final content = first.content;
         if (content != null && content.parts != null && content.parts!.isNotEmpty) {
-          final parts = content.parts!;
           final buffer = StringBuffer();
-
-          for (final Part p in parts) {
-            if (p is TextPart) {
-              // safe to access .text because p is TextPart
-              buffer.write(p.text);
-            }
-            // optionally handle other Part subtypes here (BlobPart, InlineDataPart, etc.)
+          for (final Part p in content.parts!) {
+            if (p is TextPart) buffer.write(p.text);
+            // ignore other part types for now
           }
-
           final collected = buffer.toString().trim();
           if (collected.isNotEmpty) return collected;
         }
-
-        // Last resort: toString()
         return first.toString();
       }
 
-      // If the model returned a function call or something else
       if (response.functionCalls.isNotEmpty) {
         return 'Model returned a function call: ${response.functionCalls.first.toString()}';
       }
 
       return 'No reply from model';
     } catch (e) {
-      debugPrint('extractText fallback error: $e');
+      debugPrint('extractText error: $e');
       return 'Error extracting text';
     }
   }
 
+  // UI helpers
+  void _showAndInsert(String text) {
+    setState(() {
+      _messages.insert(0, Message(text: text, isUser: false));
+    });
+    _saveMessagesLocally();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
 
+  String _shorten(String s, [int max = 160]) {
+    if (s.length <= max) return s;
+    return '${s.substring(0, max)}...';
+  }
+
+  // UI
   @override
   Widget build(BuildContext context) {
     final currentTheme = ref.watch(themeProvider);
@@ -254,9 +262,33 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
                 Text('Gemini X', style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
-            GestureDetector(
-              onTap: () => ref.read(themeProvider.notifier).toggleTheme(),
-              child: (currentTheme == ThemeMode.dark) ? const Icon(Icons.light_mode) : const Icon(Icons.dark_mode),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.delete_forever_outlined),
+                  tooltip: 'Clear chat',
+                  onPressed: () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (c) => AlertDialog(
+                        title: const Text('Clear chat?'),
+                        content: (currentTheme == ThemeMode.dark) ?
+                        Text('Are you sure you want to delete the chat history?',style:Theme.of(context).textTheme.titleMedium,):
+                        Text('Are you sure you want to delete the chat history?',style:Theme.of(context).textTheme.titleMedium,),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Clear')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) _clearHistory();
+                  },
+                ),
+                GestureDetector(
+                  onTap: () => ref.read(themeProvider.notifier).toggleTheme(),
+                  child: (currentTheme == ThemeMode.dark) ? const Icon(Icons.light_mode) : const Icon(Icons.dark_mode),
+                ),
+              ],
             ),
           ],
         ),
@@ -265,7 +297,9 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
         children: [
           Expanded(
             child: _messages.isEmpty
-                ? const Center(child: Text('Say hi to the bot!'))
+                ? const Center(
+                child:
+                Text('Say hi to the bot!',))
                 : ListView.builder(
               reverse: true,
               itemCount: _messages.length,
@@ -274,6 +308,7 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
                 final alignment = message.isUser ? Alignment.centerRight : Alignment.centerLeft;
                 final bubbleColor = message.isUser ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.secondary;
                 final textStyle = message.isUser ? Theme.of(context).textTheme.bodyMedium : Theme.of(context).textTheme.bodySmall;
+
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Align(
@@ -295,6 +330,7 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
 
           if (isLoading) const LinearProgressIndicator(),
 
+          // input area with retry button
           Padding(
             padding: const EdgeInsets.only(bottom: 30, left: 16, top: 16, right: 16),
             child: Container(
@@ -305,6 +341,16 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
               ),
               child: Row(
                 children: [
+                  // Retry button (visible when last prompt exists)
+                  if (_lastPrompt != null)
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      tooltip: 'Retry last message',
+                      onPressed: isLoading ? null : () => callGeminiModel(promptOverride: _lastPrompt),
+                    )
+                  else
+                    const SizedBox(width: 8),
+
                   Expanded(
                     child: TextField(
                       controller: _controller,
@@ -323,12 +369,12 @@ class _MyhomepageState extends ConsumerState<Myhomepage> {
                   ),
                   const SizedBox(width: 8),
                   Padding(
-                    padding: const EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.all(12.0),
                     child: GestureDetector(
-                      onTap: isLoading ? null : callGeminiModel,
+                      onTap: isLoading ? null : () => callGeminiModel(),
                       child: Image.asset('assets/send.png', height: 28),
                     ),
-                  )
+                  ),
                 ],
               ),
             ),
